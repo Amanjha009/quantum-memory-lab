@@ -1,0 +1,8 @@
+node_modules/
+dist/
+apps/desktop/node_modules/
+__pycache__/
+*.py[cod]
+.venv/
+data/temporary/*
+.vercel

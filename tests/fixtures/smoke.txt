@@ -1,0 +1,2 @@
+Quantum Memory local upload test.
+SHA-256 and byte-level recovery should work on this exact text.

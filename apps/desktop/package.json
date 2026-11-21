@@ -1,0 +1,8 @@
+{
+  "name": "quantum-memory-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "main": "electron/main.cjs",
+  "scripts": { "start": "electron ." },
+  "devDependencies": { "electron": "^39.0.0" }
+}
