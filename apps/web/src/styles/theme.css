@@ -1,0 +1,228 @@
+/* QUANTUM MEMORY LAB — DESIGN SYSTEM: QUANTUM OBSERVATORY */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+:root {
+  /* Museum & Semiconductor Lab Palette */
+  --bg-main: #F5F6F4;
+  --bg-surface: #FFFFFF;
+  --bg-elevated: #F9FAF8;
+  --bg-subtle: #ECEEEB;
+
+  /* Typography Colors */
+  --text-main: #20262D;
+  --text-secondary: #68727C;
+  --text-muted: #8E98A4;
+  --text-dim: #A8B2BD;
+
+  /* Scientific Domain Colors (Standardized Identity) */
+  --silicon-color: #475569;
+  --source-drain-color: #1e3a8a;
+  --channel-color: #0d9488;
+  --oxide-color: #0284c7;
+  --oxide-cyan: #38bdf8;
+  --oxide-pale: rgba(14, 165, 233, 0.22);
+  --floating-gate-gold: #d97706;
+  --ipd-lavender: #c4b5fd;
+  --control-gate-silver: #cbd5e1;
+  --electron-amber: #f59e0b;
+  --wave-violet: #8b5cf6;
+  --field-blue: #2563eb;
+  --success-green: #16a34a;
+
+  /* Semantic Palettes */
+  --cyan-400: #0284c7;
+  --cyan-500: #0369a1;
+  --violet-400: #7c3aed;
+  --violet-500: #6d28d9;
+  --emerald-400: #16a34a;
+  --amber-400: #d97706;
+  --amber-500: #b45309;
+
+  /* Borders & Shadows */
+  --border-light: #E2E5E8;
+  --border-medium: #D0D5DD;
+  --border-subtle: #E8ECEF;
+  --border-focus: #20262D;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 10px 24px rgba(0, 0, 0, 0.08);
+
+  /* Fonts */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-sans);
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-main);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-medium);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Scientific Museum Panels */
+.glass-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  box-shadow: var(--shadow-sm);
+  position: relative;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.glass-panel:hover {
+  border-color: var(--border-medium);
+  box-shadow: var(--shadow-md);
+}
+
+/* Buttons */
+.qml-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 14px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: 1px solid transparent;
+  outline: none;
+  user-select: none;
+  text-decoration: none;
+}
+
+.qml-btn-primary {
+  background: var(--text-main);
+  color: #FFFFFF;
+  border-color: var(--text-main);
+}
+.qml-btn-primary:hover:not(:disabled) {
+  background: #333d48;
+  border-color: #333d48;
+}
+.qml-btn-primary:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.qml-btn-secondary {
+  background: var(--bg-surface);
+  color: var(--text-main);
+  border-color: var(--border-medium);
+}
+.qml-btn-secondary:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  border-color: var(--text-secondary);
+}
+.qml-btn-secondary:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.qml-btn-warning {
+  background: var(--stored-charge-amber);
+  color: #FFFFFF;
+  border-color: var(--stored-charge-amber);
+}
+
+/* Badges */
+.qml-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+
+.qml-badge-cyan {
+  background: rgba(2, 132, 199, 0.08);
+  color: #0369a1;
+  border-color: rgba(2, 132, 199, 0.2);
+}
+
+.qml-badge-violet {
+  background: rgba(124, 58, 237, 0.08);
+  color: #6d28d9;
+  border-color: rgba(124, 58, 237, 0.2);
+}
+
+.qml-badge-emerald {
+  background: rgba(22, 163, 74, 0.08);
+  color: #15803d;
+  border-color: rgba(22, 163, 74, 0.2);
+}
+
+.qml-badge-amber {
+  background: rgba(217, 119, 6, 0.08);
+  color: #b45309;
+  border-color: rgba(217, 119, 6, 0.2);
+}
+
+/* Status Indicators */
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.status-dot.emerald {
+  background: var(--success-green);
+}
+
+/* Clean Toast Notification */
+.qml-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--text-main);
+  color: #FFFFFF;
+  border-radius: 6px;
+  padding: 10px 18px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: var(--shadow-lg);
+  z-index: 1000;
+  animation: toast-in 0.2s ease-out;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}

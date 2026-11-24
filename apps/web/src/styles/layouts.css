@@ -1,0 +1,77 @@
+/* RESPONSIVE LAYOUTS & WORKSTATION GRIDS */
+
+.app-container {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.main-content {
+  flex: 1;
+  width: 100%;
+}
+
+/* Responsive Breakpoints */
+@media (max-width: 1024px) {
+  .landing-hero-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .principles-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .observatory-main-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .quantum-lab-main-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .smartphone-journey-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .nav-telemetry-hud {
+    display: none !important;
+  }
+  #mobile-nav-toggle {
+    display: inline-flex !important;
+  }
+  .journey-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .journey-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* Toast Alert Notification */
+.qml-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(14, 22, 39, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-bright);
+  border-radius: 8px;
+  padding: 12px 20px;
+  color: var(--cyan-300);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), var(--shadow-cyan);
+  z-index: 1000;
+  max-width: min(92vw, 650px);
+  text-align: center;
+  animation: toast-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, 12px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}

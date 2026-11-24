@@ -1,139 +1,663 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { calculateTunneling, injectBitErrors, secdedRecover, sha256 } from './core/physics.js';
-import { enduranceEstimate, readSLCBlock, retentionCharge, runFnErase, runIsppProgram } from './core/flash.js';
-import { createStorageModel, garbageCollect, logicalDelete, physicallyEraseFile, restoreFile, writeFile } from './core/storage.js';
-import FlashLab from './components/FlashLab.jsx';
-import SmartphoneSimulation from './components/SmartphoneSimulation.jsx';
-import ArchitectureComparison from './components/ArchitectureComparison.jsx';
+import React, { useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
+import Navbar from './components/navigation/Navbar.jsx';
+import LandingView from './views/LandingView.jsx';
+import SmartphoneView from './views/SmartphoneView.jsx';
+import ArchitectureView from './views/ArchitectureView.jsx';
+import QuantumLabView from './views/QuantumLabView.jsx';
+import NandLabView from './views/NandLabView.jsx';
+import ReliabilityView from './views/ReliabilityView.jsx';
+import IntegrityView from './views/IntegrityView.jsx';
+import ComparisonView from './views/ComparisonView.jsx';
+import GuidedExperimentsView from './views/GuidedExperimentsView.jsx';
+import ScientificReferencesView from './views/ScientificReferencesView.jsx';
+import FileToElectronJourneyView from './views/FileToElectronJourneyView.jsx';
 
-const stages = [['01', 'Live smartphone'], ['02', 'Quantum tunneling'], ['03', 'NAND program / erase / read'], ['04', 'Endurance experiment'], ['05', 'Retention experiment'], ['06', 'File integrity & ECC'], ['07', 'Architecture comparison']];
-const moduleTabs = ['tunneling', 'nand', 'endurance', 'retention'];
+import { calculateTunneling, sha256 } from './core/physics.js';
+import { readSLCBlock, runFnErase, runIsppProgram } from './core/flash.js';
+import {
+  createStorageModel,
+  garbageCollect,
+  logicalDelete,
+  physicallyEraseFile,
+  restoreFile,
+  writeFile,
+} from './core/storage.js';
+import { createInitialStorageModel } from './core/phoneAssets.js';
+
 const demoText = 'A small photograph starts as bytes. In NAND flash, charge is stored without continuous power.';
-const toBytes = text => new TextEncoder().encode(text);
-const toBits = bytes => Array.from(bytes, byte => byte.toString(2).padStart(8, '0')).join(' ');
-const prettySize = size => size < 1024 ? `${size} B` : size < 1048576 ? `${(size / 1024).toFixed(1)} KB` : `${(size / 1048576).toFixed(2)} MB`;
-const zeroCells = () => Array.from({ length: 8 }, () => ({ chargeFc: 0, retentionBaseChargeFc: 0, pulseCount: 0 }));
-
-function IntegrityPanel({ file, bytes, hash, corrupted, eccInfo, recovered, rer, seed, setRer, setSeed, onInject, onCorrect, onVerify, onDownload, onRestart }) {
-  return <div className="integrity-grid">
-    <section className="panel integrity-panel">
-      <div className="panel-top"><div><div className="eyebrow small">BYTE-LEVEL DEMONSTRATION</div><h2>From bits to recovered file</h2></div><div className="device-chip"><i className="green"/>LOCAL PAYLOAD</div></div>
-      <div className="payload-summary"><div className="payload-icon">{file?.kind === 'photo' ? '▧' : '≡'}</div><div><b>{file?.name || 'sample-memory-note.txt'}</b><span>{prettySize(bytes.length)} · {bytes.length.toLocaleString()} bytes</span></div><button className="btn quiet" onClick={() => onDownload(bytes, file?.name || 'sample-memory-note.txt')}>Download original</button></div>
-      <div className="hash-comparison"><div><span>ORIGINAL SHA-256</span><code>{hash || 'Calculating local fingerprint…'}</code></div><div><span>CORRUPTED READ</span><code>{corrupted ? `${eccInfo?.flips.length} bit flips · seed ${seed}` : 'Not run yet'}</code></div><div><span>RECOVERED SHA-256</span><code>{recovered ? 'Ready to verify' : 'Waiting for ECC recovery'}</code></div></div>
-      <div className="binary-view"><div className="binary-head"><b>ORIGINAL BYTE SAMPLE</b><span>first {Math.min(20, bytes.length)} bytes · actual local payload</span></div><code>{toBits(bytes.slice(0, 20))}</code>{corrupted && <><div className="binary-head corrupted-head"><b>CORRUPTED READ SAMPLE</b><span>byte-level bit flips</span></div><code>{toBits(corrupted.slice(0, 20))}</code></>}</div>
-      <div className="error-controls"><div><b>Simulate physical read errors</b><span>LCG seeded bit-flip model · reproducible per seed</span></div><label>Rate <strong>{(rer * 100).toFixed(2)}%</strong><input type="range" min="0" max=".1" step=".001" value={rer} onChange={event => setRer(+event.target.value)}/></label><label>Seed <input className="seed-input" type="number" value={seed} onChange={event => setSeed(+event.target.value || 1)}/></label><button className="btn secondary" onClick={onInject}>Inject errors</button></div>
-      <div className="integrity-actions"><button className="btn primary" onClick={onCorrect} disabled={!corrupted}>RUN SECDED CORRECTION</button><button className="btn secondary" onClick={() => onDownload(corrupted, file ? `${file.name}.read` : 'sample-read.bin')} disabled={!corrupted}>DOWNLOAD READ</button><button className="btn secondary" onClick={onVerify} disabled={!recovered}>VERIFY HASH</button><button className="btn secondary" onClick={() => onDownload(recovered, file ? `${file.name}.recovered` : 'sample-recovered.txt')} disabled={!recovered}>DOWNLOAD RECOVERED</button></div>
-      {eccInfo?.corrected != null && <div className="ecc-result"><div><b>{eccInfo.code} · {eccInfo.corrected} corrected · {eccInfo.uncorrectable} uncorrectable</b><span>SECDED corrects one bit in an encoded codeword and detects, but cannot correct, two-bit errors.</span></div></div>}
-    </section>
-    <section className="panel ecc-side"><div className="eyebrow small">ERROR CORRECTION</div><h2>Redundancy makes recovery possible.</h2><p className="body-copy">Every four data bits are paired with an extended Hamming codeword (8,4). The extra parity bit supports single-error correction and double-error detection.</p><div className="ecc-code"><span>DATA</span><div>4 bits</div><span>+</span><div>4 check bits</div><span>→</span><b>SECDED</b></div><div className="ecc-steps">{['Encode each 4-bit nibble', 'Introduce reproducible read errors', 'Calculate syndrome and overall parity', 'Correct one bit, flag double errors', 'Compare recovered SHA-256'].map((step, index) => <div key={step}><span>0{index + 1}</span>{step}</div>)}</div><div className="model-note">A small educational code. Modern SSD controllers use stronger codes such as BCH and LDPC.</div><button className="btn secondary full" onClick={onRestart}>RETURN TO LIVE PHONE ↗</button></section>
-  </div>;
-}
+const toBytes = (text) => new TextEncoder().encode(text);
+const zeroCells = () =>
+  Array.from({ length: 8 }, () => ({
+    chargeFc: 0,
+    retentionBaseChargeFc: 0,
+    pulseCount: 0,
+  }));
 
 export default function App() {
-  const [stage, setStage] = useState(0);
+  // Navigation: 4 Clean Museum Sections (Defaults to 'explore')
+  const [activeNavTab, setActiveNavTab] = useState('explore');
+  const [operationsSubTab, setOperationsSubTab] = useState('nand'); // 'nand' | 'smartphone'
+  const [learnSubTab, setLearnSubTab] = useState('references'); // 'references' | 'architecture' | 'comparison'
+
+  // Shared Phone & Storage State
+  const [storageModel, setStorageModel] = useState(() => createInitialStorageModel());
+  const [selectedFileId, setSelectedFileId] = useState(null);
   const [candidateFile, setCandidateFile] = useState(null);
   const [hash, setHash] = useState('');
   const [powered, setPowered] = useState(true);
   const [phoneTab, setPhoneTab] = useState('Photos');
-  const [storageModel, setStorageModel] = useState(() => createStorageModel());
-  const [selectedFileId, setSelectedFileId] = useState(null);
   const [storageOperation, setStorageOperation] = useState(null);
   const [notice, setNotice] = useState('');
+  const fileInputRef = useRef(null);
+
+  // Shared Physical Parameters
   const [gateV, setGateV] = useState(10);
-  const [oxideNm, setOxideNm] = useState(9);
+  const [oxideNm, setOxideNm] = useState(9.0);
   const [barrierEv, setBarrierEv] = useState(3.1);
-  const [energyEv, setEnergyEv] = useState(1);
-  const [effectiveMass, setEffectiveMass] = useState(.5);
-  const [selectedLayer, setSelectedLayer] = useState(null);
+  const [energyEv, setEnergyEv] = useState(1.0);
+  const [effectiveMass, setEffectiveMass] = useState(0.5);
+
+  // Shared NAND & Cell State (8 SLC cells representing active byte)
   const [nandCells, setNandCells] = useState(zeroCells);
   const [selectedCell, setSelectedCell] = useState(0);
   const [blockCycles, setBlockCycles] = useState(0);
   const [readReferenceV, setReadReferenceV] = useState(1.2);
-  const [wearBatch, setWearBatch] = useState(100);
-  const [programSettings, setProgramSettings] = useState({ vpgmStartV: 14, vpgmMaxV: 24, vpgmStepV: .5, pulseWidthUs: 5, areaUm2: .02, verifyVtV: 1.5 });
+  const [programSettings, setProgramSettings] = useState({
+    vpgmStartV: 14.0,
+    vpgmMaxV: 24.0,
+    vpgmStepV: 0.5,
+    pulseWidthUs: 5.0,
+    areaUm2: 0.02,
+    verifyVtV: 1.5,
+  });
+
   const [lastProgram, setLastProgram] = useState(null);
   const [lastRead, setLastRead] = useState(null);
   const [lastOperation, setLastOperation] = useState(null);
-  const [age, setAge] = useState(1);
-  const [temp, setTemp] = useState(300);
-  const [retentionDefects, setRetentionDefects] = useState(1e16);
-  const [fieldStress, setFieldStress] = useState(0);
-  const [rer, setRer] = useState(.015);
-  const [seed, setSeed] = useState(37);
-  const [corrupted, setCorrupted] = useState(null);
-  const [recovered, setRecovered] = useState(null);
-  const [eccInfo, setEccInfo] = useState(null);
-  const [pythonResult, setPythonResult] = useState(null);
-  const input = useRef(null);
 
-  const activeStoredFile = storageModel.files.find(file => file.id === selectedFileId) || null;
+  // Active File & Payload Byte
+  const activeStoredFile = storageModel.files.find((f) => f.id === selectedFileId) || null;
   const activeFile = activeStoredFile || candidateFile;
   const bytes = activeFile?.bytes || toBytes(demoText);
-  const payloadByte = bytes[0] || 0;
+  const payloadByte = bytes[0] || 0x41;
   const payloadBits = payloadByte.toString(2).padStart(8, '0');
-  const localResults = useMemo(() => calculateTunneling({ gateV, oxideNm, barrierEv, energyEv, effectiveMass }), [gateV, oxideNm, barrierEv, energyEv, effectiveMass]);
-  const results = pythonResult || localResults;
-  const currentBlockRead = useMemo(() => readSLCBlock(nandCells, { readReferenceV, peCycles: blockCycles, seed }), [nandCells, readReferenceV, blockCycles, seed]);
-  const wear = useMemo(() => enduranceEstimate(blockCycles), [blockCycles]);
+
+  // Live Quantum Calculation
+  const physicsResults = useMemo(() => {
+    return calculateTunneling({
+      gateV,
+      oxideNm,
+      barrierEv,
+      energyEv,
+      effectiveMass,
+    });
+  }, [gateV, oxideNm, barrierEv, energyEv, effectiveMass]);
+
+  // Live SLC Block Read
+  const currentBlockRead = useMemo(() => {
+    return readSLCBlock(nandCells, {
+      readReferenceV,
+      peCycles: blockCycles,
+      seed: 37,
+    });
+  }, [nandCells, readReferenceV, blockCycles]);
+
   const selectedChargeFc = nandCells[selectedCell]?.chargeFc || 0;
-  const retentionPreview = useMemo(() => retentionCharge({ q0: nandCells[selectedCell]?.retentionBaseChargeFc ?? selectedChargeFc, years: age, temperatureK: temp, cycles: blockCycles, defects: retentionDefects, fieldStressGVm: fieldStress }), [nandCells, selectedCell, selectedChargeFc, age, temp, blockCycles, retentionDefects, fieldStress]);
 
-  useEffect(() => { if (!candidateFile && !activeStoredFile) sha256(toBytes(demoText)).then(setHash); }, [candidateFile, activeStoredFile]);
-  useEffect(() => { if (!notice) return undefined; const id = setTimeout(() => setNotice(''), 4200); return () => clearTimeout(id); }, [notice]);
-  useEffect(() => { let active = true; const base = window.location.protocol === 'file:' ? 'http://127.0.0.1:8765' : '/api'; const timer = setTimeout(() => fetch(`${base}/quantum`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gate_v: gateV, oxide_nm: oxideNm, barrier_ev: barrierEv, energy_ev: energyEv, effective_mass: effectiveMass }) }).then(response => response.ok ? response.json() : null).then(data => { if (active && data) setPythonResult(data); }).catch(() => {}), 100); return () => { active = false; clearTimeout(timer); }; }, [gateV, oxideNm, barrierEv, energyEv, effectiveMass]);
+  // Effects
+  useEffect(() => {
+    if (!candidateFile && !activeStoredFile) {
+      sha256(toBytes(demoText)).then(setHash);
+    }
+  }, [candidateFile, activeStoredFile]);
 
-  function selectFile(fileId) { const stored = storageModel.files.find(file => file.id === fileId); if (!stored) return; setSelectedFileId(fileId); setCandidateFile(null); setHash(stored.hash || ''); if (stored.nandCells) setNandCells(stored.nandCells); }
-  function readSnapshot(cells = nandCells, targetBits = payloadBits) { const result = readSLCBlock(cells, { readReferenceV, peCycles: blockCycles, seed }); return { ...result, match: result.bits === targetBits }; }
-  function syncActiveNand(cells) { setNandCells(cells); if (selectedFileId) setStorageModel(model => ({ ...model, files: model.files.map(file => file.id === selectedFileId ? { ...file, nandCells: cells } : file) })); }
-  function programCellAt(index, cells) { const current = cells[index]; const result = runIsppProgram({ initialChargeFc: current.chargeFc, ...programSettings, oxideNm, barrierEv }); const next = cells.slice(); next[index] = { ...current, chargeFc: result.chargeFc, retentionBaseChargeFc: result.chargeFc, pulseCount: (current.pulseCount || 0) + result.pulses.length }; return { cells: next, result }; }
+  useEffect(() => {
+    if (!notice) return undefined;
+    const timer = setTimeout(() => setNotice(''), 4500);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
+  // Synchronize NAND state
+  function syncActiveNand(cells) {
+    setNandCells(cells);
+    if (selectedFileId) {
+      setStorageModel((model) => ({
+        ...model,
+        files: model.files.map((file) =>
+          file.id === selectedFileId ? { ...file, nandCells: cells } : file
+        ),
+      }));
+    }
+  }
+
+  function readSnapshot(cells = nandCells, targetBits = payloadBits) {
+    const result = readSLCBlock(cells, { readReferenceV, peCycles: blockCycles, seed: 37 });
+    return { ...result, match: result.bits === targetBits };
+  }
+
+  function programCellAt(index, cells) {
+    const current = cells[index];
+    const result = runIsppProgram({
+      initialChargeFc: current.chargeFc,
+      ...programSettings,
+      oxideNm,
+      barrierEv,
+    });
+    const next = cells.slice();
+    next[index] = {
+      ...current,
+      chargeFc: result.chargeFc,
+      retentionBaseChargeFc: result.chargeFc,
+      pulseCount: (current.pulseCount || 0) + result.pulses.length,
+    };
+    return { cells: next, result };
+  }
+
   function programPayload(targetBits = payloadBits, sourceCells = nandCells, persist = true) {
     const initialRead = readSnapshot(sourceCells, targetBits);
-    if (targetBits.split('').some((bit, index) => bit === '1' && initialRead.cells[index].bit === 0)) { const operation = { ok: false, title: 'Block erase required', detail: 'NAND cannot program a 0 back to 1. Select a fresh page or erase its entire block.' }; setLastOperation(operation); setNotice(operation.detail); return operation; }
-    let next = sourceCells; let last = null; let programmed = 0; let failed = 0;
-    for (let index = 0; index < 8; index += 1) if (targetBits[index] === '0' && initialRead.cells[index].bit !== 0) { const operation = programCellAt(index, next); next = operation.cells; last = operation.result; programmed += 1; if (!operation.result.verified) failed += 1; }
-    const read = readSnapshot(next, targetBits);
-    if (persist) syncActiveNand(next); else setNandCells(next);
-    setLastProgram(last); setLastRead(read);
-    const result = { ok: failed === 0 && read.match, title: 'ISPP byte program', detail: `${programmed} zero bit(s) programmed with FN current; final verify used ${last?.pulses.length || 0} pulse(s). Read-back ${read.match ? 'matches' : 'does not match'} ${read.bits}.`, cells: next, read, last };
-    setLastOperation(result); setNotice(result.detail); return result;
-  }
-  function programSelectedCell() { const current = readSnapshot(); if (current.cells[selectedCell].bit === 0) { setNotice(`Cell ${selectedCell + 1} already passes program verify.`); return; } const operation = programCellAt(selectedCell, nandCells); syncActiveNand(operation.cells); const read = readSnapshot(operation.cells); const summary = { ok: operation.result.verified, title: `Cell ${selectedCell + 1} ISPP`, detail: `${operation.result.pulses.length} pulse(s) · Vt ${operation.result.vtV.toFixed(3)} V · ${operation.result.verified ? 'verify passed' : 'verify not reached'}.` }; setLastProgram(operation.result); setLastRead(read); setLastOperation(summary); setNotice(summary.detail); }
-  function eraseNandBlock() {
-    let removed = 0; const next = nandCells.map(cell => { const result = runFnErase({ initialChargeFc: cell.chargeFc, eraseVoltageV: programSettings.vpgmMaxV, oxideNm, barrierEv, pulseWidthUs: programSettings.pulseWidthUs, areaUm2: programSettings.areaUm2 }); removed += result.pulses.length; return { ...cell, chargeFc: result.chargeFc, retentionBaseChargeFc: result.chargeFc, pulseCount: 0 }; }); const erased = next.every(cell => cell.chargeFc < 1e-6); syncActiveNand(next); setBlockCycles(cycles => cycles + 1); setLastProgram(null); setLastRead(null); const detail = `Applied reverse-polarity erase pulses to all eight displayed cells (${removed} total). ${erased ? 'They now read erased.' : 'Residual charge remains.'}`; setLastOperation({ ok: erased, title: 'Whole-block FN erase', detail }); if (erased && activeStoredFile) { const result = physicallyEraseFile(storageModel, activeStoredFile.id); if (result.ok) { setStorageModel(result.model); setStorageOperation({ type: 'physical-erase', title: 'Physical NAND block erase', detail: `Manual FN erase reclaimed ${result.blocks.map(block => `B${block}`).join(', ')} and removed the selected file mapping.`, steps: ['NAND block selected', 'Reverse-field FN erase pulses applied', 'Pages returned to free state'] }); } } setNotice(detail);
-  }
-  function readNandBlock() { const read = readSnapshot(); const detail = `Read ${read.bits} (0x${read.byte.toString(16).padStart(2, '0').toUpperCase()}) at Vref ${readReferenceV.toFixed(2)} V. ${read.match ? 'It matches' : 'It differs from'} the selected file byte.`; setLastRead(read); setLastOperation({ ok: read.match, title: 'Block read / verify', detail }); setNotice(detail); }
-  function downloadSamplePhoto() {
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500" viewBox="0 0 800 500"><defs><linearGradient id="sky" x2="0" y2="1"><stop stop-color="#2b7390"/><stop offset="1" stop-color="#e6a66d"/></linearGradient></defs><rect width="800" height="500" fill="url(#sky)"/><circle cx="615" cy="125" r="56" fill="#ffe1a5"/><path d="M0 360 180 220l115 105 128-150 150 185 103-94 124 94v140H0z" fill="#284e5a"/><path d="M0 388 150 290l128 110 110-86 135 97 154-96 123 72v113H0z" fill="#1a333d"/><text x="42" y="455" fill="#fff" font-family="sans-serif" font-size="28">Memory walk · local sample</text></svg>';
-    const next = { name: 'memory-walk.svg', type: 'image/svg+xml', size: svg.length, bytes: toBytes(svg), preview: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, kind: 'photo' };
-    sha256(next.bytes).then(digest => { next.hash = digest; setHash(digest); });
-    setSelectedFileId(null); setCandidateFile(next); setPhoneTab('Photos'); setStorageOperation({ type: 'download', title: 'Photograph downloaded to the phone', detail: 'The local sample is ready for file-system allocation and NAND programming.', steps: ['Photos app received the image', 'File system awaits a save request'] }); setNotice('Sample photograph downloaded locally. Save it to program the simulated NAND pages.');
-  }
-  function createDocument() { const text = 'Quantum Memory Lab\n\nA local document stored through the same simulated file system, UFS controller and NAND model.'; const next = { name: 'quantum-memory-notes.txt', type: 'text/plain', size: text.length, bytes: toBytes(text), preview: '', kind: 'document' }; sha256(next.bytes).then(digest => { next.hash = digest; setHash(digest); }); setSelectedFileId(null); setCandidateFile(next); setPhoneTab('Files'); setStorageOperation({ type: 'document', title: 'Document created in Files', detail: 'The document is local to the workspace and has not been programmed into NAND yet.', steps: ['Files app created a document', 'File system awaits a save request'] }); setNotice('Document created. Save it to map representative NAND pages.'); }
-  async function chooseFile(file) { if (!file) return; if (!['image/jpeg', 'image/png', 'image/svg+xml', 'text/plain'].includes(file.type)) { setNotice('Choose a JPG, PNG, SVG or TXT file.'); return; } if (file.size > 10 * 1024 * 1024 || file.size === 0) { setNotice(file.size ? 'File is larger than the 10 MB classroom limit.' : 'This file is empty.'); return; } const localBytes = new Uint8Array(await file.arrayBuffer()); const digest = await sha256(localBytes); const localPreview = file.type.startsWith('image/') ? URL.createObjectURL(file) : ''; setSelectedFileId(null); setCandidateFile({ name: file.name, type: file.type, size: file.size, bytes: localBytes, preview: localPreview, hash: digest, kind: file.type.startsWith('image/') ? 'photo' : 'document' }); setHash(digest); setPhoneTab(file.type.startsWith('image/') ? 'Photos' : 'Files'); setStorageOperation({ type: 'download', title: 'Local file available on the phone', detail: `${file.name} was read in the browser and is ready to save into the flash simulation.`, steps: ['Smartphone app received a local file', 'File system awaits a save request'] }); setNotice('File read locally. It was not uploaded to a server.'); }
-  async function saveCandidateToPhone() { if (!candidateFile?.bytes) { setNotice('Download a photograph, create a document, or choose a local file first.'); return; } const digest = candidateFile.hash || await sha256(candidateFile.bytes); const targetBits = (candidateFile.bytes[0] || 0).toString(2).padStart(8, '0'); const programmed = programPayload(targetBits, zeroCells(), false); if (!programmed.ok) return; const result = writeFile(storageModel, { ...candidateFile, hash: digest, nandCells: programmed.cells }); if (!result.ok) { setNotice(result.reason); return; } setStorageModel(result.model); setSelectedFileId(result.file.id); setCandidateFile(null); setHash(digest); setStorageOperation(result.event); setLastOperation({ ok: true, title: result.event.title, detail: `${result.event.detail} ${programmed.detail}` }); setNotice(`Saved ${result.file.name}. ${programmed.detail}`); }
-  function openStoredFile() { const file = activeStoredFile; if (!file || file.status !== 'valid' || !file.bytes) { setNotice('Choose a valid stored file. A logically deleted file can be restored before garbage collection.'); return; } const sourceCells = file.nandCells || nandCells; const targetBits = (file.bytes[0] || 0).toString(2).padStart(8, '0'); const read = readSnapshot(sourceCells, targetBits); setNandCells(sourceCells); setLastRead(read); setPhoneTab(file.kind === 'photo' ? 'Photos' : 'Files'); const operation = { type: 'read', title: 'NAND read and file retrieval', detail: `UFS translated L${file.logicalAddress} to ${file.physicalPages.map(page => page.address).join(', ')}. The selected SLC byte ${read.match ? 'verified' : 'did not verify'} as ${read.bits}.`, steps: ['Smartphone app requested the file', 'File system resolved logical pages', 'UFS controller issued NAND read', 'Threshold sensing reconstructed the selected byte'] }; setStorageOperation(operation); setLastOperation({ ok: read.match, title: operation.title, detail: operation.detail }); setNotice(read.match ? `${file.name} opened after NAND threshold read verify.` : 'The selected NAND byte did not pass read verify.'); }
-  function deleteStoredFile() { if (!activeStoredFile) { setNotice('Choose a saved file before deleting it.'); return; } const result = logicalDelete(storageModel, activeStoredFile.id); if (!result.ok) { setNotice(result.reason); return; } setStorageModel(result.model); setStorageOperation(result.event); setLastOperation({ ok: true, title: result.event.title, detail: result.event.detail }); setNotice(result.event.detail); }
-  function restoreStoredFile() { if (!activeStoredFile) return; const result = restoreFile(storageModel, activeStoredFile.id); if (!result.ok) { setNotice(result.reason); return; } setStorageModel(result.model); setStorageOperation(result.event); setLastOperation({ ok: true, title: result.event.title, detail: result.event.detail }); setNotice(result.event.detail); }
-  function runGarbageCollection() { const result = garbageCollect(storageModel); if (!result.ok) { setNotice(result.reason); return; } const erasedCells = nandCells.map(cell => { const erase = runFnErase({ initialChargeFc: cell.chargeFc, eraseVoltageV: programSettings.vpgmMaxV, oxideNm, barrierEv, pulseWidthUs: programSettings.pulseWidthUs, areaUm2: programSettings.areaUm2 }); return { ...cell, chargeFc: erase.chargeFc, retentionBaseChargeFc: erase.chargeFc, pulseCount: 0 }; }); setStorageModel(result.model); setNandCells(erasedCells); setBlockCycles(cycles => cycles + 1); setLastRead(null); setStorageOperation(result.event); setLastOperation({ ok: true, title: result.event.title, detail: result.event.detail }); const selected = result.model.files.find(file => file.id === selectedFileId); if (!selected || selected.status === 'collected') { const next = result.model.files.find(file => file.status === 'valid') || null; setSelectedFileId(next?.id || null); } setNotice(result.event.detail); }
-  async function restartPhone() { if (powered) { setPowered(false); setNotice('Phone switched off. The file-system mapping and NAND charge remain in non-volatile state.'); return; } setPowered(true); if (!activeStoredFile) { setNotice('Phone restarted. No stored file is currently selected.'); return; } if (activeStoredFile.status !== 'valid' || !activeStoredFile.bytes) { setNotice('Phone restarted, but the selected file has been physically reclaimed.'); return; } const targetBits = (activeStoredFile.bytes[0] || 0).toString(2).padStart(8, '0'); const read = readSnapshot(activeStoredFile.nandCells || nandCells, targetBits); if (!read.match) { setNotice('Phone restarted, but the selected NAND byte did not verify.'); return; } const digest = await sha256(activeStoredFile.bytes); if (activeStoredFile.hash && digest !== activeStoredFile.hash) { setNotice('Phone restarted, but the local file hash does not match.'); return; } setNandCells(activeStoredFile.nandCells || nandCells); setStorageOperation({ type: 'restart-read', title: 'Restart recovered non-volatile storage', detail: `${activeStoredFile.name} was restored from ${activeStoredFile.physicalPages.map(page => page.address).join(', ')} after threshold read and hash verification.`, steps: ['Phone restarted', 'UFS read mapped NAND pages', 'Threshold verify passed', 'File system restored the file'] }); setNotice('Phone restarted. NAND read and local hash verification restored the selected file.'); }
-  function addWearCycles() { setBlockCycles(cycles => cycles + wearBatch); setLastRead(null); setLastOperation({ ok: true, title: 'Accelerated endurance stress', detail: `Added ${wearBatch} P/E cycles to the illustrative wear model.` }); setNotice(`Applied ${wearBatch} accelerated P/E cycles to this block.`); }
-  function applyRetentionToBlock() { const next = nandCells.map(cell => { const base = cell.retentionBaseChargeFc ?? cell.chargeFc; const aged = retentionCharge({ q0: base, years: age, temperatureK: temp, cycles: blockCycles, defects: retentionDefects, fieldStressGVm: fieldStress }); return { ...cell, chargeFc: aged.chargeFc }; }); syncActiveNand(next); setLastRead(null); setLastOperation({ ok: true, title: 'Retention interval applied', detail: `Applied ${age.toFixed(1)} year(s) at ${temp} K to the selected NAND block.` }); setNotice('Projected retention loss applied to the NAND block.'); }
-  function runReadErrors() { const result = injectBitErrors(bytes, rer, seed); setCorrupted(result.corrupted); setRecovered(null); setEccInfo(result); setNotice(`${result.flips.length} simulated read bit flip${result.flips.length === 1 ? '' : 's'} injected with seed ${result.seed}.`); }
-  function correctErrors() { if (!corrupted) return; const result = secdedRecover(bytes, corrupted); setRecovered(result.bytes); setEccInfo(info => ({ ...info, ...result, code: 'Extended Hamming SECDED (8,4)' })); setNotice(result.uncorrectable ? `${result.uncorrectable} double-error codeword(s) were detected.` : `ECC recovered the original payload (${result.corrected} corrected codeword(s)).`); }
-  async function verifyRecovered() { if (!recovered) return; const digest = await sha256(recovered); setNotice(digest === (activeFile?.hash || hash) ? 'Recovered file hash matches the original.' : 'Recovered file hash differs from the original.'); }
-  function download(data, name) { if (!data) return; const blob = new Blob([data], { type: activeFile?.type || 'application/octet-stream' }); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = name; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 500); }
-  function resetExperimentConfig() { setGateV(10); setOxideNm(9); setBarrierEv(3.1); setEnergyEv(1); setEffectiveMass(.5); setProgramSettings({ vpgmStartV: 14, vpgmMaxV: 24, vpgmStepV: .5, pulseWidthUs: 5, areaUm2: .02, verifyVtV: 1.5 }); setSelectedLayer(null); setLastOperation(null); setLastProgram(null); setLastRead(null); setNotice('Experiment controls reset to the documented default configuration. Stored phone files and NAND state were retained.'); }
+    if (targetBits.split('').some((bit, index) => bit === '1' && initialRead.cells[index].bit === 0)) {
+      const op = {
+        ok: false,
+        title: 'Block Erase Required',
+        detail: 'NAND flash physics cannot program a 0 back to a 1 without an entire block erase.',
+      };
+      setLastOperation(op);
+      setNotice(op.detail);
+      return op;
+    }
 
-  const title = stages[stage][1];
-  return <div className="app-shell">
-    <aside className="sidebar"><div className="brand"><div className="brand-mark">⌁</div><div><b>QUANTUM</b><span>MEMORY LAB</span></div></div><div className="side-label">YOUR JOURNEY</div><nav className="journey">{stages.map((item, index) => <button key={item[0]} className={`journey-item ${stage === index ? 'active' : ''} ${index < stage ? 'done' : ''}`} onClick={() => setStage(index)}><span className="stage-num">{index < stage ? '✓' : item[0]}</span><span>{item[1]}</span><span className="journey-dot"/></button>)}</nav><div className="sidebar-bottom"><div className="offline-pill"><span/>LOCAL MODE · FILES STAY HERE</div><div className="sidebar-note">A familiar device.<br/>A surprisingly quantum memory.</div><div className="version">QUANTUM MEMORY <span>v1.1 · EDUCATIONAL MODEL</span></div></div></aside>
-    <main className="main-area"><header className="topbar"><div className="crumb">THE EVERYDAY PHYSICS PROJECT <span>/</span> <strong>{title.toUpperCase()}</strong></div><div className="top-right"><span className="device-tag">▯ PHONE + NAND SIMULATOR</span><div className="avatar">QM</div></div></header>
-      <section className="page-heading"><div><div className="eyebrow"><span>CHAPTER {stages[stage][0]}</span><i/> INTERACTIVE EXPERIMENT</div><h1>{['Your phone and its storage, synchronized.', 'The barrier is not the end.', 'Program, erase, verify and read.', 'A memory cell under repeated stress.', 'A memory that survives power off.', 'Can the data be recovered?', 'Two ways to store charge.'][stage]}</h1><p>{['Use the virtual phone on the left and inspect the same file-system, UFS, NAND and tunnelling state on the right.', 'Inspect the calculated barrier, wavefunction, WKB transmission and FN field emission.', 'Map a byte onto SLC cells and run the same program / erase / read model used by the phone.', 'Increase P/E cycling and observe threshold spread, defects and the read margin.', 'Project charge loss under time, temperature, defects and field stress.', 'Inject reproducible read errors, run the educational ECC demonstration, and compare the recovered bytes.', 'Compare the existing floating-gate model with a charge-trap 3D NAND structure.'][stage]}</p></div><div className="step-count"><strong>{String(stage + 1).padStart(2, '0')}</strong><span> / 07</span></div></section>
-      {stage === 0 && <><SmartphoneSimulation powered={powered} phoneTab={phoneTab} setPhoneTab={setPhoneTab} model={storageModel} selectedFileId={selectedFileId} candidateFile={selectedFileId === null ? candidateFile : null} operation={storageOperation} nandBits={currentBlockRead.bits} currentDensity={results.fnCurrent} onSelectFile={selectFile} onOpen={openStoredFile} onDownloadPhoto={downloadSamplePhoto} onCreateDocument={createDocument} onChooseLocal={() => input.current?.click()} onSave={saveCandidateToPhone} onDelete={deleteStoredFile} onRestore={restoreStoredFile} onGarbageCollect={runGarbageCollection} onPower={restartPhone} onStorage={() => setPhoneTab('Storage')} onEnterMemory={() => setStage(1)}/><input ref={input} hidden type="file" accept="image/jpeg,image/png,image/svg+xml,text/plain" onChange={event => chooseFile(event.target.files?.[0])}/></>}
-      {stage >= 1 && stage <= 4 && <FlashLab activeTab={moduleTabs[stage - 1]} setActiveTab={tab => setStage(moduleTabs.indexOf(tab) + 1)} results={results} gateV={gateV} setGateV={setGateV} oxideNm={oxideNm} setOxideNm={setOxideNm} barrierEv={barrierEv} setBarrierEv={setBarrierEv} energyEv={energyEv} setEnergyEv={setEnergyEv} effectiveMass={effectiveMass} setEffectiveMass={setEffectiveMass} selectedLayer={selectedLayer} setSelectedLayer={setSelectedLayer} selectedChargeFc={selectedChargeFc} cells={nandCells} payloadByte={payloadByte} payloadBits={payloadBits} selectedCell={selectedCell} setSelectedCell={setSelectedCell} blockCycles={blockCycles} readReferenceV={readReferenceV} setReadReferenceV={setReadReferenceV} programSettings={programSettings} setProgramSettings={setProgramSettings} lastProgram={lastProgram} lastRead={lastRead} lastOperation={lastOperation} onProgramPayload={programPayload} onProgramSelected={programSelectedCell} onEraseBlock={eraseNandBlock} onReadBlock={readNandBlock} wear={wear} wearBatch={wearBatch} setWearBatch={setWearBatch} onAddWear={addWearCycles} onResetWear={() => { setBlockCycles(0); setLastRead(null); setNotice('Endurance model reset to a fresh block.'); }} onResetExperiment={resetExperimentConfig} age={age} setAge={setAge} temp={temp} setTemp={setTemp} fieldStress={fieldStress} setFieldStress={setFieldStress} defects={retentionDefects} setDefects={setRetentionDefects} retentionPreview={retentionPreview} onApplyRetention={applyRetentionToBlock}/>} 
-      {stage === 5 && <IntegrityPanel file={activeFile} bytes={bytes} hash={activeFile?.hash || hash} corrupted={corrupted} eccInfo={eccInfo} recovered={recovered} rer={rer} seed={seed} setRer={setRer} setSeed={setSeed} onInject={runReadErrors} onCorrect={correctErrors} onVerify={verifyRecovered} onDownload={download} onRestart={() => setStage(0)}/>} 
-      {stage === 6 && <ArchitectureComparison onOpenTunnelLab={() => setStage(1)}/>} 
-      <footer className="page-footer"><span>Quantum Memory is an educational model of selected flash-memory physics.</span><span>Local processing · No account · No uploads</span></footer>
-    </main>{notice && <div className="toast" role="status">{notice}</div>}
-  </div>;
+    let next = sourceCells;
+    let last = null;
+    let programmed = 0;
+    let failed = 0;
+
+    for (let index = 0; index < 8; index++) {
+      if (targetBits[index] === '0' && initialRead.cells[index].bit !== 0) {
+        const op = programCellAt(index, next);
+        next = op.cells;
+        last = op.result;
+        programmed++;
+        if (!op.result.verified) failed++;
+      }
+    }
+
+    const read = readSnapshot(next, targetBits);
+    if (persist) syncActiveNand(next);
+    else setNandCells(next);
+
+    setLastProgram(last);
+    setLastRead(read);
+
+    const result = {
+      ok: failed === 0 && read.match,
+      title: 'ISPP Byte Program Complete',
+      detail: `${programmed} cell(s) programmed with FN field emission; verify satisfied in ${last?.pulses.length || 0} pulses. Read-back matches ${read.bits}.`,
+      cells: next,
+      read,
+      last,
+    };
+    setLastOperation(result);
+    setNotice(result.detail);
+    return result;
+  }
+
+  function eraseNandBlock() {
+    let removed = 0;
+    const next = nandCells.map((cell) => {
+      const result = runFnErase({
+        initialChargeFc: cell.chargeFc,
+        eraseVoltageV: programSettings.vpgmMaxV,
+        oxideNm,
+        barrierEv,
+        pulseWidthUs: programSettings.pulseWidthUs,
+        areaUm2: programSettings.areaUm2,
+      });
+      removed += result.pulses.length;
+      return {
+        ...cell,
+        chargeFc: result.chargeFc,
+        retentionBaseChargeFc: result.chargeFc,
+        pulseCount: 0,
+      };
+    });
+
+    const erased = next.every((cell) => cell.chargeFc < 1e-6);
+    syncActiveNand(next);
+    setBlockCycles((c) => c + 1);
+    setLastProgram(null);
+    setLastRead(null);
+
+    const detail = `Applied reverse-field FN erase pulses across block (${removed} total pulses). All cells reset to erased threshold (0.45 V).`;
+    setLastOperation({ ok: erased, title: 'Whole-Block Reverse-Field Erase', detail });
+    setNotice(detail);
+  }
+
+  function readNandBlock() {
+    const read = readSnapshot();
+    const detail = `Sensed byte ${read.bits} (0x${read.byte.toString(16).padStart(2, '0').toUpperCase()}) at Vref ${readReferenceV.toFixed(2)} V. ${read.match ? 'Matches' : 'Differs from'} target payload byte.`;
+    setLastRead(read);
+    setLastOperation({ ok: read.match, title: 'NAND Array Sense Read', detail });
+    setNotice(detail);
+  }
+
+  function selectFile(fileId) {
+    const stored = storageModel.files.find((f) => f.id === fileId);
+    if (!stored) return;
+    setSelectedFileId(fileId);
+    setCandidateFile(null);
+    setHash(stored.hash || '');
+    if (stored.nandCells) setNandCells(stored.nandCells);
+  }
+
+  function downloadSamplePhoto() {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500" viewBox="0 0 800 500"><defs><linearGradient id="sky" x2="0" y2="1"><stop stop-color="#0f172a"/><stop offset="1" stop-color="#0284c7"/></linearGradient></defs><rect width="800" height="500" fill="url(#sky)"/><circle cx="615" cy="125" r="56" fill="#38bdf8"/><path d="M0 360 180 220l115 105 128-150 150 185 103-94 124 94v140H0z" fill="#0369a1"/><path d="M0 388 150 290l128 110 110-86 135 97 154-96 123 72v113H0z" fill="#082f49"/><text x="42" y="455" fill="#fff" font-family="sans-serif" font-size="28">Quantum Memory Lab · Sample</text></svg>';
+    const sample = {
+      name: 'quantum-landscape.svg',
+      type: 'image/svg+xml',
+      size: svg.length,
+      bytes: toBytes(svg),
+      preview: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
+      kind: 'photo',
+    };
+    sha256(sample.bytes).then((digest) => {
+      sample.hash = digest;
+      setHash(digest);
+    });
+    setSelectedFileId(null);
+    setCandidateFile(sample);
+    setPhoneTab('Photos');
+    setStorageOperation({
+      type: 'download',
+      title: 'Photograph captured into virtual memory',
+      detail: 'Local JPEG/SVG bytes are buffered in RAM; ready for UFS logical page allocation and NAND programming.',
+      steps: [
+        'Camera sensor DMA write to system RAM',
+        'VFS prepares inode and 256-byte clusters',
+        'UFS controller awaits host commit',
+      ],
+    });
+    setNotice('Sample photograph downloaded. Click "SAVE TO PHONE" to commit to NAND.');
+  }
+
+  function createDocument() {
+    const text = 'Quantum Memory Lab 2.0\n\nA solid-state storage simulation powered by 1D Schrödinger quantum scattering and Fowler-Nordheim electron tunneling.';
+    const doc = {
+      name: 'quantum-notes.txt',
+      type: 'text/plain',
+      size: text.length,
+      bytes: toBytes(text),
+      preview: '',
+      kind: 'document',
+    };
+    sha256(doc.bytes).then((digest) => {
+      doc.hash = digest;
+      setHash(digest);
+    });
+    setSelectedFileId(null);
+    setCandidateFile(doc);
+    setPhoneTab('Files');
+    setStorageOperation({
+      type: 'document',
+      title: 'Document created in virtual storage',
+      detail: 'Text document buffered locally; ready for UFS FTL allocation.',
+      steps: ['Text editor created document', 'VFS allocated virtual inode', 'Ready for NAND save commit'],
+    });
+    setNotice('Document created. Click "SAVE TO PHONE" to program NAND pages.');
+  }
+
+  async function chooseFile(file) {
+    if (!file) return;
+    const localBytes = new Uint8Array(await file.arrayBuffer());
+    const digest = await sha256(localBytes);
+    const localPreview = file.type.startsWith('image/') ? URL.createObjectURL(file) : '';
+    setSelectedFileId(null);
+    setCandidateFile({
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      bytes: localBytes,
+      preview: localPreview,
+      hash: digest,
+      kind: file.type.startsWith('image/') ? 'photo' : 'document',
+    });
+    setHash(digest);
+    setPhoneTab(file.type.startsWith('image/') ? 'Photos' : 'Files');
+    setNotice(`Loaded ${file.name} locally (${localBytes.length} bytes). Click SAVE to program NAND.`);
+  }
+
+  async function saveCandidateToPhone(fileCandidate) {
+    const file = fileCandidate || candidateFile;
+    if (!file?.bytes) {
+      setNotice('Select a photograph or create a document first.');
+      return;
+    }
+    const digest = file.hash || (await sha256(file.bytes));
+    const targetBits = (file.bytes[0] || 0).toString(2).padStart(8, '0');
+    const programmed = programPayload(targetBits, zeroCells(), false);
+    if (!programmed.ok) return;
+
+    const result = writeFile(storageModel, {
+      ...file,
+      hash: digest,
+      nandCells: programmed.cells,
+    });
+    if (!result.ok) {
+      setNotice(result.reason);
+      return;
+    }
+
+    setStorageModel(result.model);
+    setSelectedFileId(result.file.id);
+    setCandidateFile(null);
+    setHash(digest);
+    setStorageOperation(result.event);
+    setLastOperation({
+      ok: true,
+      title: result.event.title,
+      detail: `${result.event.detail} ${programmed.detail}`,
+    });
+    setNotice(`Saved ${result.file.name}. Mapped to ${result.file.physicalPages.map((p) => p.address).join(', ')}.`);
+  }
+
+  function openStoredFile() {
+    if (!activeStoredFile || activeStoredFile.status !== 'valid') {
+      setNotice('Select a valid stored file to open.');
+      return;
+    }
+    const sourceCells = activeStoredFile.nandCells || nandCells;
+    const targetBits = (activeStoredFile.bytes[0] || 0).toString(2).padStart(8, '0');
+    const read = readSnapshot(sourceCells, targetBits);
+    setNandCells(sourceCells);
+    setLastRead(read);
+    setStorageOperation({
+      type: 'read',
+      title: 'UFS Read Request Verified',
+      detail: `Read ${read.bits} from ${activeStoredFile.physicalPages.map((p) => p.address).join(', ')}. Threshold sense matches binary payload.`,
+      steps: ['UFS Host command submitted', 'Bitline sense comparator evaluated', 'Data payload returned to OS'],
+    });
+    setNotice(`Opened ${activeStoredFile.name} successfully.`);
+  }
+
+  function deleteStoredFile(fileId) {
+    const targetId = fileId || selectedFileId;
+    if (!targetId) return;
+    const result = logicalDelete(storageModel, targetId);
+    if (!result.ok) return;
+    setStorageModel(result.model);
+    setStorageOperation(result.event);
+    const targetFile = storageModel.files.find((f) => f.id === targetId);
+    setNotice(`Deleted ${targetFile?.name || 'file'}. Marked invalid in FTL.`);
+  }
+
+  function restoreStoredFile(fileId) {
+    const targetId = fileId || selectedFileId;
+    if (!targetId) return;
+    const result = restoreFile(storageModel, targetId);
+    if (!result.ok) return;
+    setStorageModel(result.model);
+    setStorageOperation(result.event);
+    const targetFile = storageModel.files.find((f) => f.id === targetId);
+    setNotice(`Restored ${targetFile?.name || 'file'} before garbage collection.`);
+  }
+
+  function runGarbageCollection() {
+    const result = garbageCollect(storageModel);
+    if (!result.ok) {
+      setNotice(result.reason);
+      return;
+    }
+    setStorageModel(result.model);
+    setStorageOperation(result.event);
+    setBlockCycles((c) => c + 1);
+    setNotice(result.event.detail);
+  }
+
+  function restartPhone() {
+    if (powered) {
+      setPowered(false);
+      setNotice('Phone powered down. Non-volatile charge remains in NAND floating gates.');
+    } else {
+      setPowered(true);
+      setNotice('Phone powered on. Reading FTL tables and verifying stored non-volatile charge.');
+    }
+  }
+
+  function downloadFile(data, name) {
+    if (!data) return;
+    const blob = new Blob([data], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = name;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 500);
+  }
+
+  return (
+    <div className="app-container">
+      {/* Top Navigation Bar: QUANTUM MEMORY LAB */}
+      <Navbar activeTab={activeNavTab} onSelectTab={setActiveNavTab} />
+
+      {/* Main View Router */}
+      <main className="main-content">
+        {/* 1. EXPLORE: Central 3D Transistor, 6-Stage Guided Experiment, Compact Scientific Panel */}
+        {activeNavTab === 'explore' && (
+          <QuantumLabView
+            gateV={gateV}
+            setGateV={setGateV}
+            oxideNm={oxideNm}
+            setOxideNm={setOxideNm}
+            barrierEv={barrierEv}
+            setBarrierEv={setBarrierEv}
+            energyEv={energyEv}
+            setEnergyEv={setEnergyEv}
+            effectiveMass={effectiveMass}
+            setEffectiveMass={setEffectiveMass}
+            selectedChargeFc={selectedChargeFc}
+            onProgramPulse={() => programCellAt(selectedCell, nandCells)}
+            onResetExperiment={() => {
+              setGateV(10);
+              setOxideNm(9);
+              setBarrierEv(3.1);
+              setEnergyEv(1);
+              setEffectiveMass(0.5);
+              setNotice('Controls reset to default 9.0 nm / 10 V reference configuration.');
+            }}
+          />
+        )}
+
+        {/* 2. FILE ➔ ELECTRON: 12-Stage Real File-to-NAND-to-Electron Simulation */}
+        {activeNavTab === 'journey' && (
+          <FileToElectronJourneyView
+            storageModel={storageModel}
+            setStorageModel={setStorageModel}
+            nandCells={nandCells}
+            setNandCells={syncActiveNand}
+            onNavigateToPhone={() => {
+              setActiveNavTab('operations');
+              setOperationsSubTab('smartphone');
+            }}
+            onNavigateToNandLab={() => {
+              setActiveNavTab('operations');
+              setOperationsSubTab('nand');
+            }}
+          />
+        )}
+
+        {/* 2. QUANTUM EXPERIMENT: 10 Interactive Guided Experiments & Challenges */}
+        {activeNavTab === 'experiment' && (
+          <GuidedExperimentsView
+            onLoadExperimentParams={(params) => {
+              if (params.gateV != null) setGateV(params.gateV);
+              if (params.oxideNm != null) setOxideNm(params.oxideNm);
+              if (params.barrierEv != null) setBarrierEv(params.barrierEv);
+              if (params.energyEv != null) setEnergyEv(params.energyEv);
+              if (params.effectiveMass != null) setEffectiveMass(params.effectiveMass);
+              setActiveNavTab('explore');
+              setNotice(`Loaded preset: tox=${params.oxideNm}nm, φB=${params.barrierEv}eV, Vg=${params.gateV}V`);
+            }}
+            onNavigateToLab={() => setActiveNavTab('explore')}
+          />
+        )}
+
+        {/* 3. MEMORY OPERATIONS: NAND Array, Smartphone Digital Twin, ECC */}
+        {activeNavTab === 'operations' && (
+          <div style={{ maxWidth: '1600px', margin: '0 auto', padding: '16px 24px 60px' }}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', borderBottom: '1px solid var(--border-light)', paddingBottom: '12px' }}>
+              <button
+                onClick={() => setOperationsSubTab('nand')}
+                className={`qml-btn ${operationsSubTab === 'nand' ? 'qml-btn-primary' : 'qml-btn-secondary'}`}
+              >
+                NAND FLASH WORKSTATION
+              </button>
+              <button
+                onClick={() => setOperationsSubTab('smartphone')}
+                className={`qml-btn ${operationsSubTab === 'smartphone' ? 'qml-btn-primary' : 'qml-btn-secondary'}`}
+              >
+                SMARTPHONE DIGITAL TWIN
+              </button>
+              <button
+                onClick={() => setOperationsSubTab('reliability')}
+                className={`qml-btn ${operationsSubTab === 'reliability' ? 'qml-btn-primary' : 'qml-btn-secondary'}`}
+              >
+                RETENTION & ENDURANCE
+              </button>
+              <button
+                onClick={() => setOperationsSubTab('integrity')}
+                className={`qml-btn ${operationsSubTab === 'integrity' ? 'qml-btn-primary' : 'qml-btn-secondary'}`}
+              >
+                ECC & INTEGRITY
+              </button>
+            </div>
+
+            {operationsSubTab === 'nand' && (
+              <NandLabView
+                storageModel={storageModel}
+                nandCells={nandCells}
+                setNandCells={syncActiveNand}
+                selectedCell={selectedCell}
+                setSelectedCell={setSelectedCell}
+                blockCycles={blockCycles}
+                setBlockCycles={setBlockCycles}
+                readReferenceV={readReferenceV}
+                setReadReferenceV={setReadReferenceV}
+                programSettings={programSettings}
+                setProgramSettings={setProgramSettings}
+                onProgramPayload={programPayload}
+                onEraseBlock={eraseNandBlock}
+                onReadBlock={readNandBlock}
+                payloadByte={payloadByte}
+                payloadBits={payloadBits}
+                lastProgram={lastProgram}
+                lastRead={lastRead}
+                lastOperation={lastOperation}
+              />
+            )}
+
+            {operationsSubTab === 'smartphone' && (
+              <>
+                <SmartphoneView
+                  powered={powered}
+                  phoneTab={phoneTab}
+                  setPhoneTab={setPhoneTab}
+                  model={storageModel}
+                  selectedFileId={selectedFileId}
+                  candidateFile={candidateFile}
+                  operation={storageOperation}
+                  nandBits={currentBlockRead.bits}
+                  currentDensity={physicsResults.fnCurrent}
+                  onSelectFile={selectFile}
+                  onOpen={openStoredFile}
+                  onDownloadPhoto={downloadSamplePhoto}
+                  onCreateDocument={createDocument}
+                  onChooseLocal={() => fileInputRef.current?.click()}
+                  onSave={saveCandidateToPhone}
+                  onDelete={deleteStoredFile}
+                  onRestore={restoreStoredFile}
+                  onGarbageCollect={runGarbageCollection}
+                  onPower={restartPhone}
+                  onNavigateToMemory={() => setActiveNavTab('explore')}
+                  onNavigateToJourney={() => {
+                    setActiveNavTab('journey');
+                  }}
+                />
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  hidden
+                  accept="image/jpeg,image/png,image/svg+xml,text/plain"
+                  onChange={(e) => chooseFile(e.target.files?.[0])}
+                />
+              </>
+            )}
+
+            {operationsSubTab === 'reliability' && (
+              <ReliabilityView
+                nandCells={nandCells}
+                setNandCells={syncActiveNand}
+                selectedCell={selectedCell}
+                blockCycles={blockCycles}
+                setBlockCycles={setBlockCycles}
+                readReferenceV={readReferenceV}
+                onReadBlock={readNandBlock}
+              />
+            )}
+
+            {operationsSubTab === 'integrity' && (
+              <IntegrityView
+                file={activeFile}
+                bytes={bytes}
+                hash={activeFile?.hash || hash}
+                onDownload={downloadFile}
+                onReturnToPhone={() => setOperationsSubTab('smartphone')}
+              />
+            )}
+          </div>
+        )}
+
+        {/* 4. LEARN: References, Multiscale Architecture, and 3D Charge-Trap Comparison */}
+        {activeNavTab === 'learn' && (
+          <div style={{ maxWidth: '1600px', margin: '0 auto', padding: '16px 24px 60px' }}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', borderBottom: '1px solid var(--border-light)', paddingBottom: '12px' }}>
+              <button
+                onClick={() => setLearnSubTab('references')}
+                className={`qml-btn ${learnSubTab === 'references' ? 'qml-btn-primary' : 'qml-btn-secondary'}`}
+              >
+                SCIENTIFIC REFERENCES & EQUATIONS
+              </button>
+              <button
+                onClick={() => setLearnSubTab('architecture')}
+                className={`qml-btn ${learnSubTab === 'architecture' ? 'qml-btn-primary' : 'qml-btn-secondary'}`}
+              >
+                🎬 3D STORAGE JOURNEY
+              </button>
+              <button
+                onClick={() => setLearnSubTab('comparison')}
+                className={`qml-btn ${learnSubTab === 'comparison' ? 'qml-btn-primary' : 'qml-btn-secondary'}`}
+              >
+                FLOATING-GATE VS 3D CHARGE-TRAP
+              </button>
+            </div>
+
+            {learnSubTab === 'references' && <ScientificReferencesView />}
+            {learnSubTab === 'architecture' && (
+              <ArchitectureView
+                onOpenTunnelLab={() => setActiveNavTab('explore')}
+                onOpenSmartphone={() => {
+                  setActiveNavTab('operations');
+                  setOperationsSubTab('smartphone');
+                }}
+              />
+            )}
+            {learnSubTab === 'comparison' && (
+              <ComparisonView onOpenTunnelLab={() => setActiveNavTab('explore')} />
+            )}
+          </div>
+        )}
+      </main>
+
+      {/* Toast Notice */}
+      {notice && <div className="qml-toast">{notice}</div>}
+    </div>
+  );
 }

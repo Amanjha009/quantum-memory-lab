@@ -8,7 +8,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node --test tests/*.test.js && PYTHONPATH=physics-engine python3 -m unittest discover -s physics-engine/tests -v",
+    "test": "node tests/run-tests.js",
     "desktop": "npm --prefix apps/desktop run start"
   },
   "dependencies": {
